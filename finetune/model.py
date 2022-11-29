@@ -9,49 +9,6 @@ def euclidean_metric_cal(a, b):
     return euc_metric.view(-1, a.shape[1], b.shape[1])
 
 
-def contrastive_loss(pooled_output, labels, k, temperature=1, neg_num=1, margin=1):
-    B, H = pooled_output.shape
-    pooled_output = pooled_output.view(-1, 1 + k + neg_num, H)
-    
-    anchor = pooled_output[:, :1, :]
-    pos_examples = pooled_output[:, 1: (1 + k), :]
-    neg_examples = pooled_output[:, (1 + k):, :]
-    pos_euclidean_distance = euclidean_metric_cal(anchor, pos_examples)
-    neg_euclidean_distance = euclidean_metric_cal(anchor, neg_examples)
-    pos_loss = torch.sum(torch.pow(pos_euclidean_distance, 2), dim=2) / k
-    neg_loss = torch.pow(torch.clamp(margin - neg_euclidean_distance, min=0.0), 2).squeeze(2)  
-    loss_contrastive = torch.mean((pos_loss + neg_loss) / 2)
-    return loss_contrastive
-
-
-def triplet_loss(pooled_output, k, temperature=1, neg_num=1, a=0.1):
-    B, H = pooled_output.shape
-    pooled_output = pooled_output.view(-1, 1 + k + neg_num, H)
-    
-    anchor = pooled_output[:, :1, :]
-    pos_examples = pooled_output[:, 1: (1 + k), :]
-    neg_examples = pooled_output[:, (1 + k):, :]
-    
-    pos_euclidean_distance = euclidean_metric_cal(anchor, pos_examples)
-    neg_euclidean_distance = euclidean_metric_cal(anchor, neg_examples)
-    pos_loss = torch.sum(torch.pow(pos_euclidean_distance, 2), dim=2) / k
-    neg_loss = torch.pow(neg_euclidean_distance, 2).squeeze(2)  
-    basic_loss = pos_loss - neg_loss + a
-    loss = torch.sum(torch.clamp(basic_loss, min=0.0))
-    return loss
-
-
-def large_margin_cosine_loss(y_pred, y_true, scale=30, margin=0.35, neg_margin=0, neg_m=0.35):
-    labels_mask = torch.nn.functional.one_hot(y_true, num_classes=y_pred.shape[-1])
-    if neg_margin == 0:
-        y_pred = labels_mask * (y_pred - margin) + (1 - labels_mask) * y_pred
-    else:
-        y_pred = labels_mask * (y_pred - margin) + (1 - labels_mask) * (y_pred + neg_m)
-    y_pred *= scale
-    loss_fct = nn.CrossEntropyLoss()
-    return loss_fct(y_pred, y_true)
-
-
 def function_cal(x, y, temperature, kccl_euc=0, ks=1, km=0):
     if kccl_euc == 1:
         euc_dis = euclidean_metric_cal(x, y)
@@ -106,11 +63,7 @@ class BertForModel(BertPreTrainedModel):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.model_type = model_type
         print('self.model_type: ', self.model_type)
-        if self.model_type == '0':
-            self.classifier = nn.Linear(config.hidden_size, num_labels, bias=False)
-            self.weight = self.classifier.weight
-        else:
-            self.weight = nn.Parameter(torch.rand(self.num_labels, self.bert.config.hidden_size))
+        self.weight = nn.Parameter(torch.rand(self.num_labels, self.bert.config.hidden_size))
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids=None, token_type_ids=None, attention_mask=None, labels=None, feature_ext=False, mode=None, args=None, return_dict=None, centroids=None):
@@ -123,8 +76,6 @@ class BertForModel(BertPreTrainedModel):
         pooled_output = F.normalize(pooled_output)  
         weight = F.normalize(self.weight)  
         logits = torch.mm(pooled_output, weight.T)
-        pooled_output = None
-        logits = None
 
         if feature_ext:
             return pooled_output
